@@ -1,0 +1,35 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/game/blame_game.gd" id="1_game"]
+[ext_resource type="Script" path="res://scripts/game/office_bg.gd" id="2_bg"]
+[ext_resource type="Script" path="res://scripts/game/boss.gd" id="3_boss"]
+[ext_resource type="Script" path="res://scripts/game/fx_layer.gd" id="4_fx"]
+[ext_resource type="Script" path="res://scripts/ui/hud.gd" id="5_hud"]
+
+[node name="Game" type="Node2D"]
+script = ExtResource("1_game")
+
+[node name="World" type="Node2D" parent="."]
+
+[node name="Background" type="Node2D" parent="World"]
+script = ExtResource("2_bg")
+
+[node name="Boss" type="Node2D" parent="World"]
+z_index = 1
+script = ExtResource("3_boss")
+
+[node name="PotLayer" type="Node2D" parent="World"]
+z_index = 2
+
+[node name="FxLayer" type="Node2D" parent="World"]
+z_index = 3
+script = ExtResource("4_fx")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Root" type="Control" parent="HUD"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("5_hud")

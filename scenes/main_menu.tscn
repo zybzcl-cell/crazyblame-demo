@@ -1,0 +1,26 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/main_menu.gd" id="1_menu"]
+[ext_resource type="Script" path="res://scripts/game/office_bg.gd" id="2_bg"]
+[ext_resource type="Script" path="res://scripts/game/boss.gd" id="3_boss"]
+[ext_resource type="Script" path="res://scripts/ui/menu_prop.gd" id="4_prop"]
+
+[node name="MainMenu" type="Control"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_menu")
+
+[node name="World" type="Node2D" parent="."]
+
+[node name="Background" type="Node2D" parent="World"]
+script = ExtResource("2_bg")
+
+[node name="Boss" type="Node2D" parent="World"]
+z_index = 1
+script = ExtResource("3_boss")
+
+[node name="Prop" type="Node2D" parent="World"]
+z_index = 2
+script = ExtResource("4_prop")

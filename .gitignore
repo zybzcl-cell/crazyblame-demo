@@ -1,0 +1,7 @@
+# Godot 生成的导入缓存
+.godot/
+# 测试运行时产物（截图 / 临时存档）
+tests/.tmp/
+*.tmp
+# macOS
+.DS_Store

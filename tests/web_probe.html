@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<!--
+	Web 试玩版的「启动自检」页面（验证工具，不会打包进 web_build）。
+
+	用法：
+	   1. 把 web_build 用任意静态服务器跑起来
+	   2. 把这个文件复制成 web_build/_probe.html
+	   3. 用真实浏览器打开 http://<host>/_probe.html
+	   4. 页面会把自检结果写进 document.title（形如 `PROBE {...}`），
+	      在没有截图权限的环境里用 AppleScript 读标题就能拿到结果
+
+	它检查的是「浏览器真的把游戏引擎跑起来了」：页面资源、画布尺寸、WebGL、
+	开始遮罩、触摸能力、安全区支持、音频上下文，以及加载过程中的 JS 报错。
+-->
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8">
+		<title>PROBE waiting</title>
+	</head>
+	<body style="margin:0;background:#111;color:#eee;font:14px sans-serif">
+		<iframe id="game" src="index.html" style="width:390px;height:844px;border:0"></iframe>
+		<script>
+			const out = { probe: "web", errors: [] };
+			window.addEventListener("error", (e) => out.errors.push(String(e.message)));
+			window.addEventListener("unhandledrejection", (e) => out.errors.push("rejection:" + e.reason));
+
+			function publish() {
+				document.title = "PROBE " + JSON.stringify(out);
+			}
+
+			function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+			(async () => {
+				out.wasm = typeof WebAssembly === "object";
+				out.webgl = (() => {
+					try {
+						const c = document.createElement("canvas");
+						return !!(c.getContext("webgl2") || c.getContext("webgl"));
+					} catch (e) { return false; }
+				})();
+				out.touch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+				out.dpr = window.devicePixelRatio;
+				out.visualViewport = !!window.visualViewport;
+				out.safeAreaCss = CSS.supports("padding-top: env(safe-area-inset-top)");
+				out.crossOriginIsolated = !!window.crossOriginIsolated;
+				await sleep(300);
+
+				const frame = document.getElementById("game");
+				out.iframeLoaded = await new Promise((resolve) => {
+					if (frame.contentDocument && frame.contentDocument.readyState === "complete") { resolve(true); return; }
+					frame.addEventListener("load", () => resolve(true), { once: true });
+					setTimeout(() => resolve(false), 20000);
+				});
+				const doc = frame.contentDocument;
+				const canvas = doc ? doc.getElementById("canvas") : null;
+				out.hasCanvas = !!canvas;
+				out.hasStartOverlay = !!(doc && doc.getElementById("cb-start"));
+				out.hasStatusBar = !!(doc && doc.getElementById("status"));
+				out.viewportMeta = doc ? (doc.querySelector("meta[name=viewport]") || {}).content : null;
+				const style = doc ? frame.contentWindow.getComputedStyle(doc.body) : null;
+				out.bodyTouchAction = style ? style.touchAction : null;
+
+				// 等引擎把画布撑开（第一次要下载 38MB wasm + 8MB pck）
+				let waited = 0;
+				while (canvas && (canvas.width < 100 || canvas.height < 100) && waited < 40000) {
+					await sleep(500);
+					waited += 500;
+				}
+				out.bootMs = waited;
+				out.canvasBacking = canvas ? [canvas.width, canvas.height] : null;
+				out.canvasCss = canvas ? [canvas.clientWidth, canvas.clientHeight] : null;
+				out.canvasPadding = canvas && frame.contentWindow
+					? frame.contentWindow.getComputedStyle(canvas).paddingTop : null;
+
+				let gl = null;
+				try { gl = canvas ? (canvas.getContext("webgl2") || canvas.getContext("webgl")) : null; }
+				catch (e) { out.glError = String(e); }
+				out.hasGlContext = !!gl;
+				await sleep(2500);
+				let sigBefore = null;
+				if (gl) {
+					const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+					const buf = new Uint8Array(w * h * 4);
+					gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+					let samples = 0, lit = 0, gold = 0;
+					for (let y = 0; y < h; y += 6) {
+						for (let x = 0; x < w; x += 6) {
+							const i = (y * w + x) * 4;
+							samples++;
+							const r = buf[i], g = buf[i + 1], b = buf[i + 2];
+							if (r + g + b > 60) { lit++; }
+							if (r > 190 && g > 140 && b < 130) { gold++; }
+						}
+					}
+					out.pixels = { samples, litRatio: +(lit / samples).toFixed(3), goldRatio: +(gold / samples).toFixed(4) };
+					sigBefore = readSignature(gl);
+				}
+
+				// 先测一次「动画本底噪声」：不做任何操作，1 秒后画面差多少
+				await sleep(1000);
+				const sigIdle = gl ? readSignature(gl) : null;
+				out.idleDrift = sigBefore && sigIdle ? +signatureDistance(sigBefore, sigIdle).toFixed(4) : null;
+
+				// 模拟一次点击（第一次用户手势）：开始遮罩应该消失，音频上下文应被创建
+				try {
+					const rect = canvas.getBoundingClientRect();
+					const x = rect.left + rect.width / 2;
+					const y = rect.top + rect.height * 0.76; // 开始甩锅按钮大概的位置
+					const mode = new URLSearchParams(location.search).get("mode") || "pointer";
+					out.inputMode = mode;
+					if (mode === "touch") {
+						// 注意：合成出来的 touchstart/touchend 不会让浏览器再派发 pointer 事件，
+						// 所以这条路径只能验证「事件被丢弃时不会报错」；真正验证交互用 pointer 模式。
+						dispatchTouch(canvas, x, y);
+					} else if (mode === "mouse") {
+						dispatchMouse(canvas, x, y);
+					} else {
+						const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1,
+							pointerType: mode === "mouse" ? "mouse" : "touch", isPrimary: true, buttons: 1 };
+						canvas.dispatchEvent(new PointerEvent("pointerdown", opts));
+						canvas.dispatchEvent(new PointerEvent("pointerup", Object.assign({}, opts, { buttons: 0 })));
+					}
+					out.syntheticTap = true;
+				} catch (e) {
+					out.syntheticTap = "failed:" + e;
+				}
+				await sleep(600);
+				out.overlayAfterTap = !!(doc && doc.getElementById("cb-start"));
+				if (frame.contentWindow.AudioContext || frame.contentWindow.webkitAudioContext) {
+					out.audioApi = true;
+				}
+				// 点击之后等一会儿（3 秒准备 + 过场），再看画面变了多少
+				await sleep(5000);
+				if (gl && sigBefore) {
+					const sigAfter = readSignature(gl);
+					out.tapChange = +signatureDistance(sigBefore, sigAfter).toFixed(4);
+					out.sceneChanged = out.tapChange > Math.max(out.idleDrift * 3, 0.02);
+					const gold = goldRatio(gl);
+					out.goldAfter = gold;
+					// 再点一次左上角的「×」（返回主菜单），看金色标题有没有回来
+					try {
+						const rect = canvas.getBoundingClientRect();
+						const bx = rect.left + rect.width * 0.077;
+						const by = rect.top + rect.height * 0.059;
+						const mode2 = out.inputMode;
+						if (mode2 === "touch") { dispatchTouch(canvas, bx, by); }
+						else {
+							const o = { bubbles: true, cancelable: true, clientX: bx, clientY: by,
+								pointerId: 2, pointerType: "touch", isPrimary: true, buttons: 1 };
+							canvas.dispatchEvent(new PointerEvent("pointerdown", o));
+							canvas.dispatchEvent(new PointerEvent("pointerup", Object.assign({}, o, { buttons: 0 })));
+						}
+						out.tappedBack = true;
+					} catch (e) { out.tappedBack = "failed:" + e; }
+					await sleep(2500);
+					out.goldAfterBack = goldRatio(gl);
+					out.returnedToMenu = out.goldAfterBack > 0.008;
+				}
+				publish();
+			})();
+
+			function readSignature(gl, grid = 12) {
+				const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+				const buf = new Uint8Array(w * h * 4);
+				gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+				const sig = [];
+				for (let gy = 0; gy < grid; gy++) {
+					for (let gx = 0; gx < grid; gx++) {
+						const x = Math.floor((gx + 0.5) * w / grid);
+						const y = Math.floor((gy + 0.5) * h / grid);
+						const i = (y * w + x) * 4;
+						sig.push((buf[i] + buf[i + 1] + buf[i + 2]) / 765);
+					}
+				}
+				return sig;
+			}
+
+			function signatureDistance(a, b) {
+				let sum = 0;
+				for (let i = 0; i < a.length; i++) { sum += Math.abs(a[i] - b[i]); }
+				return sum / a.length;
+			}
+
+			function goldRatio(gl) {
+				const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+				const buf = new Uint8Array(w * h * 4);
+				gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+				let samples = 0, gold = 0;
+				for (let y = 0; y < h; y += 6) {
+					for (let x = 0; x < w; x += 6) {
+						const i = (y * w + x) * 4;
+						samples++;
+						if (buf[i] > 190 && buf[i + 1] > 140 && buf[i + 2] < 130) { gold++; }
+					}
+				}
+				return +(gold / samples).toFixed(4);
+			}
+
+			// 触摸路径：真机浏览器上用的是 touchstart / touchmove / touchend
+			function dispatchMouse(canvas, x, y) {
+				const rect = canvas.getBoundingClientRect();
+				const base = { bubbles: true, cancelable: true, clientX: x, clientY: y,
+					screenX: x, screenY: y, button: 0, buttons: 1,
+					view: canvas.ownerDocument.defaultView };
+				void rect;
+				canvas.dispatchEvent(new MouseEvent("mousedown", base));
+				canvas.dispatchEvent(new MouseEvent("mouseup", Object.assign({}, base, { buttons: 0 })));
+				canvas.dispatchEvent(new MouseEvent("click", Object.assign({}, base, { buttons: 0 })));
+			}
+
+			function dispatchTouch(canvas, x, y) {
+				const target = canvas;
+				const rect = canvas.getBoundingClientRect();
+				const mk = (type, touchList) => {
+					const ev = new Event(type, { bubbles: true, cancelable: true });
+					ev.touches = touchList;
+					ev.targetTouches = touchList;
+					ev.changedTouches = touchList;
+					return ev;
+				};
+				let touches = [];
+				if (typeof Touch === "function") {
+					touches = [new Touch({ identifier: 1, target: target, clientX: x, clientY: y })];
+				}
+				target.dispatchEvent(mk("touchstart", touches));
+				target.dispatchEvent(mk("touchend", []));
+				void rect;
+			}
+		</script>
+	</body>
+</html>
