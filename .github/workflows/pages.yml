@@ -1,0 +1,59 @@
+name: Deploy demo to GitHub Pages
+
+# 把仓库里已经构建好的 Web 试玩版（web_build/）发布到 GitHub Pages。
+# 只在 main 分支有新提交时自动部署，也支持手动触发（Actions 页面里的 Run workflow）。
+#
+# 说明：这里**不构建游戏**，只发布 web_build/ 里已经导出并测试过的产物。
+# 需要重新构建时，在本地跑 ./tools/build_web.sh 并把新的 web_build/ 提交上来。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只允许一个部署在跑；有新的提交就取消排队中的旧任务
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Publish web_build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 部署前先确认要发布的内容是完整的（缺文件就直接失败，别推一个坏站点上去）
+      - name: Verify web_build artifacts
+        run: |
+          set -e
+          for f in index.html index.js index.wasm index.pck; do
+            if [ ! -s "web_build/$f" ]; then
+              echo "::error::缺少 web_build/$f，无法发布"
+              exit 1
+            fi
+            echo "  ✓ web_build/$f  $(du -h "web_build/$f" | cut -f1)"
+          done
+          echo "发布目录体积：$(du -sh web_build | cut -f1)"
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      # 只把 web_build/ 作为站点内容发布（不会把整个源码仓库当成网站）
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web_build
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
