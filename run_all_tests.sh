@@ -44,7 +44,7 @@ SUITES=(
 	"输入（鼠标 + 触摸）|res://tests/input_test.tscn|"
 	"构图与空间层级（老板 / 办公室 / 操作区 / HUD）|res://tests/composition_test.tscn|"
 	"中文字体与文案（内嵌字体覆盖所有 UI 文字）|res://tests/font_test.tscn|"
-	"甩锅随机性 / 菜单层级 / 受击表现|res://tests/polish_test.tscn|"
+	"老板甩锅 / 菜单层级 / 受击表现|res://tests/polish_test.tscn|"
 )
 
 # 这些是本机环境噪音，不是项目问题（沙箱 / 没有钥匙串访问时会打印）
