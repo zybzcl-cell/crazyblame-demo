@@ -5,6 +5,7 @@ extends Node2D
 ## 只负责「自己长什么样 + 自己怎么动」，不做任何判定（判定在 blame_game.gd 里）。
 ## 状态机：
 ##   HIDDEN  在池子里歇着（不会新建 / 销毁节点）
+##   WINDUP  被老板攥在手里蓄力（这时它跟着老板的手走，玩家碰不到）
 ##   FLYING  老板甩出来，正在场地里飘（进了场地才能被抓住）
 ##   HELD    被玩家捏在手里，跟着手指走
 ##   THROWN  已经甩出去了，正朝老板飞
@@ -13,7 +14,7 @@ extends Node2D
 ## 五种锅的**外形**也是分开画的：普通锅、铁锅（厚沿 + 铆钉）、平底锅（长柄）、
 ## 压力锅（阀 + 压力表）、破锅（缺口 + 裂纹），不是换颜色而已。
 
-enum State { HIDDEN, FLYING, HELD, THROWN, RESULT }
+enum State { HIDDEN, FLYING, HELD, THROWN, RESULT, WINDUP }
 
 ## 拖动残影的最大点数
 const TRAIL_MAX := 10
@@ -21,6 +22,9 @@ const TRAIL_MAX := 10
 var type: PotType
 var pot_id: String = ""
 var blame: String = ""
+## 这一口锅是从哪个方向飞进场地的（left / right / upper_left / upper_right /
+## lower_left / lower_right），只用来做「不要连续同方向」与调试，不影响手感。
+var entry_lane: String = ""
 var state: State = State.HIDDEN
 var velocity: Vector2 = Vector2.ZERO
 var scale_factor: float = 1.0
@@ -28,6 +32,20 @@ var scale_factor: float = 1.0
 var drift_speed: float = 150.0
 ## 从甩出到现在的秒数（超时就当甩歪了）
 var throw_time: float = 0.0
+
+## ---- 老板甩锅：蓄力（被攥在手里）与脱手
+## 蓄力剩余时间；归零就是老板手臂前甩、锅脱手的那一帧
+var windup_left: float = 0.0
+var windup_total: float = 0.0
+## 老板甩向哪个方向（六个方向模板之一），以及脱手时的速度
+var throw_direction: Vector2 = Vector2.DOWN
+var throw_launch_speed: float = 1200.0
+## 老板这一下打算把锅甩到玩家区域的哪个点（六个落点之一）
+var throw_target: Vector2 = Vector2.ZERO
+## 脱手之后那一小段「速度线」的剩余时间
+var speed_line_time: float = 0.0
+## 老板脱手的那一点（测试用来验证「锅从老板手部离开」）
+var release_point: Vector2 = Vector2.ZERO
 
 ## 存活计时：life 到 0 就「锅凉了」（= 一次 Miss）
 var life: float = 8.0
@@ -79,11 +97,13 @@ func _ready() -> void:
 ## 开始这一口锅：从老板那边飞向场地
 func launch(
 	pot: PotType, blame_text: String, field: Rect2, start_position: Vector2,
-	direction: Vector2, speed: float, life_seconds: float, scale_value: float
+	direction: Vector2, speed: float, life_seconds: float, scale_value: float,
+	lane: String = ""
 ) -> void:
 	type = pot
 	pot_id = pot.id
 	blame = blame_text
+	entry_lane = lane
 	scale_factor = scale_value
 	_field = field
 	life = life_seconds
@@ -117,6 +137,100 @@ func grab() -> void:
 	held_time = 0.0
 	_trail.clear()
 	queue_redraw()
+
+
+## 老板把锅攥在手里蓄力：锅跟着老板的手走，玩家碰不到（can_grab 要求 FLYING + in_field）
+func begin_windup(
+	pot: PotType, blame_text: String, lane: String, direction: Vector2, speed: float,
+	windup_seconds: float, scale_value: float, field: Rect2, target: Vector2 = Vector2.ZERO
+) -> void:
+	type = pot
+	pot_id = pot.id
+	blame = blame_text
+	entry_lane = lane
+	_field = field
+	scale_factor = scale_value
+	scale = Vector2.ONE * scale_value
+	modulate = Color.WHITE
+	life = pot.life_seconds
+	max_life = life
+	age = 0.0
+	held_time = 0.0
+	charge = 0.0
+	hit_charge = 0.0
+	throw_time = 0.0
+	windup_left = maxf(windup_seconds, 0.01)
+	windup_total = windup_left
+	throw_direction = direction.normalized() if direction.length() > 0.001 else Vector2.DOWN
+	throw_launch_speed = speed
+	throw_target = target
+	speed_line_time = 0.0
+	in_field = false
+	velocity = Vector2.ZERO
+	_angle = 0.0
+	_spin = 0.0
+	_jitter_timer = 1.0
+	_trail.clear()
+	_result_time = 0.0
+	state = State.WINDUP
+	visible = true
+	queue_redraw()
+
+
+## 蓄力中：把自己贴在老板的手上（老板的手每帧都在动）
+func pin_to(point: Vector2) -> void:
+	global_position = point
+	_angle = lerp_angle(_angle, 0.0, 0.35)
+
+
+## 蓄力推进：返回 true 表示「这一帧老板脱手了」
+func windup_step(delta: float, hand_point: Vector2) -> bool:
+	if state != State.WINDUP:
+		return false
+	pin_to(hand_point)
+	windup_left -= delta
+	return windup_left <= 0.0
+
+
+## 老板手臂前甩、锅脱手：从手部那一点开始高速飞出去
+func release_from_hand(point: Vector2) -> void:
+	if state != State.WINDUP:
+		return
+	release_point = point
+	global_position = point
+	velocity = throw_direction * throw_launch_speed
+	age = 0.0
+	in_field = false
+	throw_time = 0.0
+	_angle = _rng.randf_range(-0.4, 0.4)
+	_spin = _rng.randf_range(-4.0, 4.0)
+	speed_line_time = 0.36
+	_trail.clear()
+	state = State.FLYING
+	queue_redraw()
+
+
+## 测试 / 调试用：把这口锅直接放进场地（跳过「老板甩锅」那一段）
+func drop_into_field(at: Vector2) -> void:
+	windup_left = 0.0
+	speed_line_time = 0.0
+	in_field = true
+	state = State.FLYING
+	velocity = Vector2.RIGHT.rotated(_rng.randf_range(0.0, TAU)) * drift_speed
+	global_position = at
+	visible = true
+	queue_redraw()
+
+
+func is_winding_up() -> bool:
+	return state == State.WINDUP
+
+
+## 蓄力进度 0~1（1 = 马上要脱手了）
+func windup_ratio() -> float:
+	if windup_total <= 0.0:
+		return 1.0
+	return clampf(1.0 - windup_left / windup_total, 0.0, 1.0)
 
 
 ## 图鉴 / 菜单里的静态预览（不参与玩法，也不会自己走时间）
@@ -214,10 +328,13 @@ func hibernate() -> void:
 # ---------------------------------------------------------------- 每帧推进
 
 func tick(delta: float) -> void:
-	if state == State.HIDDEN:
+	# 蓄力中的锅由老板的手带着走（游戏主控每帧调用 windup_step），这里不自己推进时间：
+	# age 也从「脱手飞出去」那一刻才开始算，保证「反应速度加成」的基准没有变。
+	if state == State.HIDDEN or state == State.WINDUP:
 		return
 	age += delta
 	_pulse += delta
+	speed_line_time = maxf(speed_line_time - delta, 0.0)
 	match state:
 		State.FLYING:
 			_tick_flying(delta)
@@ -303,7 +420,8 @@ func is_active() -> bool:
 
 ## 还在「等着被处理」的状态（同屏数量、超时判定都看它）
 func is_actionable() -> bool:
-	return state == State.FLYING or state == State.HELD or state == State.THROWN
+	return state == State.FLYING or state == State.HELD or state == State.THROWN \
+		or state == State.WINDUP
 
 
 func can_grab() -> bool:
@@ -362,6 +480,9 @@ func _draw() -> void:
 			draw_circle(to_local(_trail[i]), (2.0 + 6.0 * t) * scale_factor,
 				Color(Palette.ACCENT, 0.30 * t))
 
+	# 老板刚甩出来的那一下：锅屁股后面拖一串速度线（「甩出去」的速度感）
+	if state == State.FLYING and speed_line_time > 0.0:
+		_draw_speed_lines(r)
 	_draw_shadow(r)
 	match type.id:
 		"iron":
@@ -377,6 +498,17 @@ func _draw() -> void:
 
 	_draw_state_overlays(r)
 	_draw_tag(r)
+
+
+func _draw_speed_lines(r: float) -> void:
+	var ratio := clampf(speed_line_time / 0.36, 0.0, 1.0)
+	var back := -throw_direction.normalized()
+	var side := back.orthogonal()
+	for i in 3:
+		var offset := side * r * (0.5 - 0.5 * float(i))
+		var length := r * (1.4 + 1.8 * ratio) * (1.0 - 0.22 * float(i))
+		draw_line(to_local(global_position) + offset, to_local(global_position) + offset + back * length,
+			Color(1.0, 0.94, 0.80, 0.55 * ratio), maxf(r * 0.10, 2.0), true)
 
 
 func _draw_shadow(r: float) -> void:
@@ -476,6 +608,13 @@ func _draw_broken(r: float) -> void:
 
 
 func _draw_state_overlays(r: float) -> void:
+	# 被老板攥在手里蓄力：一圈金色的「蓄力」光环（告诉玩家锅还没出手）
+	if state == State.WINDUP:
+		var ratio := windup_ratio()
+		draw_arc(Vector2.ZERO, r * 1.6, -PI * 0.5, -PI * 0.5 + TAU * ratio, 30,
+			Color(Palette.ACCENT, 0.85), 4.0)
+		draw_arc(Vector2.ZERO, r * 1.85, _pulse * 2.0, _pulse * 2.0 + 1.5, 18,
+			Color(Palette.ACCENT, 0.30), 2.0)
 	# 手里捏着：高亮圈 + 指向老板的虚线，第一次玩也能一眼看懂往哪甩
 	if state == State.HELD:
 		draw_arc(Vector2.ZERO, r * 1.5, 0.0, TAU, 30, Color(Palette.ACCENT, 0.75), 3.0)

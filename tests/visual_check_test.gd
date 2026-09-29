@@ -12,7 +12,7 @@ const SHOT_DIR := "res://tests/.tmp"
 const SHOTS := [
 	"shot_1_menu.png", "shot_2_start.png", "shot_3_mid.png", "shot_4_hurt.png",
 	"shot_5_frenzy.png", "shot_6_result.png", "shot_7_codex.png", "shot_8_settings.png",
-	"shot_9_boss_stages.png",
+	"shot_9_boss_stages.png", "shot_10_pause.png",
 ]
 
 ## 区域都按新的空间预算取：HUD 0.03~0.10 / 老板 0.18~0.46 / 操作区 0.51~0.92 / 底部 0.93~0.99
@@ -185,11 +185,21 @@ func _test_panels() -> void:
 		_panel_ratio(codex, Rect2(0.08, 0.15, 0.84, 0.70)) > 0.25,
 		"%.3f" % _panel_ratio(codex, Rect2(0.08, 0.15, 0.84, 0.70)))
 	var settings := _load("shot_8_settings.png")
-	_check("设置面板画出来了（有按钮与文字）",
-		_panel_ratio(settings, Rect2(0.10, 0.25, 0.80, 0.50)) > 0.3
-		and _bright_ratio(settings, Rect2(0.10, 0.25, 0.80, 0.50)) > 0.005,
-		"面板 %.3f / 文字 %.4f" % [_panel_ratio(settings, Rect2(0.10, 0.25, 0.80, 0.50)),
-			_bright_ratio(settings, Rect2(0.10, 0.25, 0.80, 0.50))])
+	# 面板本身 + 「按钮文字那一列」都要有东西。
+	# （按钮文字是居中排的，所以按文字所在的窄列来看，而不是把整片背景一起平均，
+	#   否则「老板透出来」也会被算成文字亮度。）
+	_check("设置面板画出来了（大面积面板底色）",
+		_panel_ratio(settings, Rect2(0.20, 0.20, 0.60, 0.60)) > 0.3,
+		"%.3f" % _panel_ratio(settings, Rect2(0.20, 0.20, 0.60, 0.60)))
+	_check("设置面板上的按钮 / 文字真的画出来了（居中那一列有亮色文字）",
+		_bright_ratio(settings, Rect2(0.42, 0.20, 0.16, 0.45)) > 0.003,
+		"%.4f" % _bright_ratio(settings, Rect2(0.42, 0.20, 0.16, 0.45)))
+	var pause := _load("shot_10_pause.png")
+	_check("游戏内暂停菜单画出来了（面板 + 居中那列有按钮文字）",
+		_panel_ratio(pause, Rect2(0.20, 0.20, 0.60, 0.60)) > 0.3
+		and _bright_ratio(pause, Rect2(0.42, 0.20, 0.16, 0.50)) > 0.002,
+		"面板 %.3f / 文字 %.4f" % [_panel_ratio(pause, Rect2(0.20, 0.20, 0.60, 0.60)),
+			_bright_ratio(pause, Rect2(0.42, 0.20, 0.16, 0.50))])
 
 
 # ---------------------------------------------------------------- 像素统计

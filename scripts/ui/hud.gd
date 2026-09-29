@@ -14,6 +14,8 @@ extends Control
 signal restart_requested
 signal menu_requested
 signal quit_requested
+signal pause_requested
+signal resume_requested
 
 const RESULT_SCENE := "res://scenes/result_card.tscn"
 
@@ -36,6 +38,8 @@ var _banner: Label
 var _shout: Label
 var _toast: Label
 var _quit_button: Button
+var _pause_button: Button
+var _game_menu: GameMenu
 var _result_card: ResultCard
 
 var _banner_time := 0.0
@@ -75,6 +79,9 @@ func _build() -> void:
 	_quit_button = UiKit.button("×", UiKit.FONT_H2, Palette.DANGER)
 	_quit_button.tooltip_text = "返回主菜单"
 	_quit_button.pressed.connect(func() -> void: quit_requested.emit())
+	_pause_button = UiKit.button("暂停", UiKit.FONT_SMALL, Palette.INFO)
+	_pause_button.tooltip_text = "暂停（图鉴 / 操作说明 / 设置）"
+	_pause_button.pressed.connect(func() -> void: pause_requested.emit())
 
 	_countdown = UiKit.centered_label("", 150, Palette.ACCENT)
 	_banner = UiKit.centered_label("", 46, Palette.ACCENT)
@@ -84,7 +91,7 @@ func _build() -> void:
 	var everything: Array = [_time_label, _time_value, _score_label, _score_value,
 		_combo_label, _combo_value, _stats_line, _boss_title, _boss_bar, _boss_stage,
 		_boss_hp, _boss_line, _phase_chip, _hint, _countdown, _banner, _shout, _toast,
-		_quit_button]
+		_quit_button, _pause_button]
 	for node in everything:
 		add_child(node)
 
@@ -99,6 +106,13 @@ func _build() -> void:
 	_hint.add_theme_color_override("font_outline_color", Color(0.05, 0.06, 0.09, 0.8))
 	_phase_chip.add_theme_stylebox_override("normal",
 		UiKit.panel_style(Color(Palette.PANEL, 0.85), Palette.PANEL_EDGE, 14, 1))
+
+	# 游戏内的「非游戏界面」（暂停 / 操作说明 / 图鉴 / 设置）：加在 HUD 文字之上、结算卡之下
+	_game_menu = GameMenu.new()
+	_game_menu.visible = false
+	add_child(_game_menu)
+	_game_menu.resume_requested.connect(func() -> void: resume_requested.emit())
+	_game_menu.menu_requested.connect(func() -> void: quit_requested.emit())
 
 	_result_card = (load(RESULT_SCENE) as PackedScene).instantiate() as ResultCard
 	_result_card.visible = false
@@ -135,19 +149,22 @@ func _layout_now(size: Vector2) -> void:
 
 	# ---- 顶部一行：返回 / 倒计时 / 连击 / 阶段
 	_quit_button.position = Vector2(hud.position.x + pad, hud.position.y + hud.size.y * 0.06)
-	_quit_button.size = Vector2(col * 0.085, hud.size.y * 0.82)
-	var time_x := hud.position.x + pad + col * 0.10
+	_quit_button.size = Vector2(col * 0.075, hud.size.y * 0.82)
+	_pause_button.position = Vector2(hud.position.x + pad + col * 0.085,
+		hud.position.y + hud.size.y * 0.06)
+	_pause_button.size = Vector2(col * 0.115, hud.size.y * 0.82)
+	var time_x := hud.position.x + col * 0.25
 	_time_label.position = Vector2(time_x, hud.position.y + hud.size.y * 0.02)
-	_time_label.size = Vector2(col * 0.24, hud.size.y * 0.34)
+	_time_label.size = Vector2(col * 0.22, hud.size.y * 0.34)
 	_time_value.position = Vector2(time_x, hud.position.y + hud.size.y * 0.32)
-	_time_value.size = Vector2(col * 0.24, hud.size.y * 0.68)
-	var combo_x := hud.position.x + col * 0.36
+	_time_value.size = Vector2(col * 0.22, hud.size.y * 0.68)
+	var combo_x := hud.position.x + col * 0.48
 	_combo_label.position = Vector2(combo_x, hud.position.y + hud.size.y * 0.02)
-	_combo_label.size = Vector2(col * 0.28, hud.size.y * 0.34)
+	_combo_label.size = Vector2(col * 0.24, hud.size.y * 0.34)
 	_combo_value.position = Vector2(combo_x, hud.position.y + hud.size.y * 0.32)
-	_combo_value.size = Vector2(col * 0.28, hud.size.y * 0.68)
-	_phase_chip.position = Vector2(hud.position.x + col * 0.70, hud.position.y + hud.size.y * 0.18)
-	_phase_chip.size = Vector2(col * 0.265, hud.size.y * 0.62)
+	_combo_value.size = Vector2(col * 0.24, hud.size.y * 0.68)
+	_phase_chip.position = Vector2(hud.position.x + col * 0.735, hud.position.y + hud.size.y * 0.18)
+	_phase_chip.size = Vector2(col * 0.235, hud.size.y * 0.62)
 
 	# ---- 老板精神状态
 	_boss_title.position = Vector2(bar.position.x + pad, bar.position.y - h * 0.021)
@@ -184,6 +201,7 @@ func _layout_now(size: Vector2) -> void:
 	_stats_line.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 
 	_result_card.configure(size)
+	_game_menu.configure(size)
 
 
 # ---------------------------------------------------------------- 每帧推进
@@ -355,6 +373,23 @@ func quit_button() -> Button:
 	return _quit_button
 
 
+func pause_button() -> Button:
+	return _pause_button
+
+
+func game_menu() -> GameMenu:
+	return _game_menu
+
+
+## 打开 / 关闭游戏内的暂停菜单（非游戏界面）
+func show_game_menu() -> void:
+	_game_menu.open()
+
+
+func hide_game_menu() -> void:
+	_game_menu.close()
+
+
 func _fill_style(color: Color) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = color
@@ -404,7 +439,9 @@ func stats_text() -> String:
 func text_nodes() -> Array:
 	var list: Array = [_time_label, _time_value, _score_label, _score_value, _combo_label,
 		_combo_value, _stats_line, _boss_title, _boss_stage, _boss_hp, _boss_line,
-		_phase_chip, _hint, _countdown, _banner, _shout, _toast]
+		_phase_chip, _hint, _countdown, _banner, _shout, _toast, _pause_button]
+	if _game_menu != null:
+		list.append_array(_game_menu.text_nodes())
 	if _result_card != null:
 		list.append_array(_result_card.text_nodes())
 	return list

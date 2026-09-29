@@ -103,6 +103,16 @@ func _capture_round() -> void:
 	advance(game, 0.9, 0.05)
 	await _settle(4)
 	_check("疯狂甩锅时间（整屏泛红）能真实渲染", await _shot("shot_5_frenzy.png"))
+	# 4.5 游戏内的暂停菜单：Boss / 锅 / 特效都被藏起来，只留面板
+	game.open_pause_menu()
+	await _settle(4)
+	_check("游戏内暂停菜单能真实渲染（此时 Boss 与锅已经藏起来）",
+		game.is_overlay_open() and not game.boss().visible
+		and await _shot("shot_10_pause.png"))
+	game.close_pause_menu()
+	await _settle(2)
+	_check("关掉暂停菜单后 Boss 与锅恢复显示",
+		not game.is_overlay_open() and game.boss().visible)
 	# 5. 结算：一直打到出结果
 	guard = 0
 	while not game.is_finished() and guard < 120:
@@ -124,15 +134,21 @@ func _capture_menu_and_panels() -> void:
 	add_child(menu)
 	await _settle(24)
 	_check("主菜单能真实渲染（标题 + 办公室老板 + 按钮）", await _shot("shot_1_menu.png"))
-	menu.codex().refresh()
-	menu.codex().visible = true
+	# 走真实入口打开图鉴：会藏起菜单里的老板与飞锅（Boss 不会穿透面板）
+	menu.open_codex()
 	await _settle(6)
+	_check("打开图鉴时，菜单里的老板真的被藏起来了（截图里 Boss 不会挡在前面）",
+		not menu.boss_node().visible and not menu.prop_node().visible
+		and menu.overlay_open())
 	_check("锅图鉴面板能真实渲染（五种锅 + 解锁进度）", await _shot("shot_7_codex.png"))
-	menu.codex().visible = false
-	menu.settings().refresh()
-	menu.settings().visible = true
+	menu.close_panels()
+	menu.open_settings()
 	await _settle(6)
+	_check("打开设置时，菜单里的老板同样被藏起来了",
+		not menu.boss_node().visible and menu.overlay_open())
 	_check("设置面板能真实渲染（声音 / 震动 / 清档）", await _shot("shot_8_settings.png"))
+	menu.close_panels()
+	_check("关掉面板后菜单里的老板恢复显示", menu.boss_node().visible and not menu.overlay_open())
 	menu.queue_free()
 	await _settle(3)
 
@@ -187,7 +203,7 @@ func _shot(file_name: String) -> bool:
 func _all_shots_have_content() -> bool:
 	var names := ["shot_0_glyphs.png", "shot_1_menu.png", "shot_2_start.png", "shot_3_mid.png",
 		"shot_4_hurt.png", "shot_5_frenzy.png", "shot_6_result.png", "shot_7_codex.png",
-		"shot_8_settings.png", "shot_9_boss_stages.png"]
+		"shot_8_settings.png", "shot_9_boss_stages.png", "shot_10_pause.png"]
 	var ok := true
 	for name in names:
 		var path := "%s/%s" % [OUT_DIR, name]

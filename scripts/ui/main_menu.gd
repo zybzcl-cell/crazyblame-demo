@@ -4,6 +4,12 @@ extends Control
 ##
 ## 菜单上还有一个「吉祥物老板」：他没血条，但会随着你历史最好成绩换表情 ——
 ## 打得越好，他在菜单里就越蔫（最高评级 S 时会直接趴桌上）。
+##
+## 打开图鉴 / 设置这类「非游戏界面」时，会把菜单里的游戏实体（吉祥物老板 + 飞锅）
+## 藏起来并停掉它们的动画，同时把面板顶到最上层 —— 这样 Boss 不会穿透在面板后面。
+
+## 面板打开时的层级：必须高于 World 里的老板（z_index = 1）与飞锅（z_index = 2）
+const PANEL_Z := 20
 
 @onready var _background: OfficeBackground = $World/Background
 @onready var _boss: BlameBoss = $World/Boss
@@ -20,6 +26,7 @@ var _quit_button: Button
 var _codex: PotCodex
 var _settings: SettingsPanel
 var _size := Vector2(720.0, 1280.0)
+var _overlay_open := false
 
 
 func _ready() -> void:
@@ -33,6 +40,9 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	# 打开面板时暂停菜单里的动态演出（老板的呼吸 / 抖腿、飞锅、背景特效）
+	if _overlay_open:
+		return
 	_boss.tick(delta)
 	_background.tick(delta)
 	_prop.tick(delta)
@@ -148,23 +158,51 @@ func _on_start() -> void:
 
 
 func _on_codex() -> void:
+	open_codex()
+
+
+## 打开锅图鉴（按钮与自动化测试都走这里，保证「隐藏游戏实体」一定生效）
+func open_codex() -> void:
 	AudioManager.play("ui_click")
 	_codex.refresh()
 	_settings.visible = false
 	_codex.visible = true
+	_set_overlay(true)
 
 
 func _on_settings() -> void:
+	open_settings()
+
+
+## 打开设置面板
+func open_settings() -> void:
 	AudioManager.play("ui_click")
 	_settings.refresh()
 	_codex.visible = false
 	_settings.visible = true
+	_set_overlay(true)
 
 
 func _close_panels() -> void:
+	close_panels()
+
+
+## 关掉所有面板，恢复菜单里的游戏实体
+func close_panels() -> void:
 	AudioManager.play("ui_click")
 	_codex.visible = false
 	_settings.visible = false
+	_set_overlay(false)
+
+
+## 非游戏界面（图鉴 / 设置）打开时：藏起老板与飞锅、停掉动画、面板顶到最上层。
+## 这是从「可见性 + 节点层级 + 动画状态」上解决问题，而不是把背景调得更黑。
+func _set_overlay(open: bool) -> void:
+	_overlay_open = open
+	_boss.visible = not open
+	_prop.visible = not open
+	_codex.z_index = PANEL_Z if open else 0
+	_settings.z_index = PANEL_Z if open else 0
 
 
 func _on_quit() -> void:
@@ -191,3 +229,12 @@ func boss_node() -> BlameBoss:
 
 func menu_stage_for(rating: int) -> int:
 	return _menu_stage(rating)
+
+
+## 现在是不是有「非游戏界面」开着（自动化测试用来确认老板被藏起来了）
+func overlay_open() -> bool:
+	return _overlay_open
+
+
+func prop_node() -> MenuProp:
+	return _prop

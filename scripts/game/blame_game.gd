@@ -23,6 +23,26 @@ enum State { IDLE, COUNTDOWN, PLAYING, ENDING, RESULT }
 ## 锅池大小：同屏最多 5 口 + 结算动画里的几口，够用且一局里不会新建节点
 const POT_POOL_SIZE := 12
 
+## 老板甩锅的六个方向模板：左 / 右 × 上 / 中 / 下。
+## 随机的是「老板把锅往哪个方向甩」，不是「锅从哪凭空出现」——
+## 每一口锅都先在老板手里蓄力，被手臂甩出去之后才飞进玩家区域。
+const THROW_ZONES := [
+	{"id": "left_upper", "side": -1.0, "vertical": -1.0},
+	{"id": "left_mid", "side": -1.0, "vertical": 0.0},
+	{"id": "left_lower", "side": -1.0, "vertical": 1.0},
+	{"id": "right_upper", "side": 1.0, "vertical": -1.0},
+	{"id": "right_mid", "side": 1.0, "vertical": 0.0},
+	{"id": "right_lower", "side": 1.0, "vertical": 1.0},
+]
+## 连续两次甩锅「看起来太像」（方向点积大于这个值）就换一个方向，避免老甩同一个高度
+const THROW_REPEAT_DOT := 0.97
+## 老板手里蓄力多久（和 boss.gd 的 THROW_WINDUP 是同一条时间轴）
+const THROW_WINDUP_SECONDS := 0.34
+## 从脱手到飞进玩家区域的大致时间（决定甩出去的初速度）
+const THROW_FLIGHT_SECONDS := 0.26
+## 开局前几口锅给一句「甩锅！」提示，教玩家看老板的动作预判方向
+const THROW_CUE_HINT_COUNT := 3
+
 @onready var _world: Node2D = $World
 @onready var _background: OfficeBackground = $World/Background
 @onready var _boss: BlameBoss = $World/Boss
@@ -58,6 +78,7 @@ var _frenzy_hits := 0
 var _throws := 0
 var _pot_hits: Dictionary = {}
 var _announced_combo: Array[int] = []
+var _announced_panic: Array[int] = []
 
 var _end_timer := 0.0
 var _end_reason := ""
@@ -70,9 +91,17 @@ var _last_pointer_pos := Vector2.ZERO
 var _pointer_velocity := Vector2.ZERO
 var _pointer_delta := 1.0 / 60.0
 
+## 是否有「非游戏界面」开着（暂停菜单 / 图鉴 / 操作说明 / 设置）。
+## 开着的时候：玩法冻结，Boss、锅、受击特效全部藏起来，只有面板可见。
+var _overlay_open := false
 var _shake := 0.0
 var _seed := 0
 var _rng := RandomNumberGenerator.new()
+## 上一口锅的入场方向（用来避免连续同向）
+var _last_lane := ""
+var _last_entry_dir := Vector2.ZERO
+## 老板甩了多少口锅（开局前几口会给一句「甩锅！」提示）
+var _boss_throws := 0
 ## 收到过多少个输入事件（测试 / 调试用：确认鼠标与触摸真的走到这里）
 var input_events := 0
 ## 最近一次输入事件的位置（测试 / 调试用）
@@ -90,6 +119,8 @@ func _ready() -> void:
 	_hud.restart_requested.connect(restart)
 	_hud.menu_requested.connect(go_to_menu)
 	_hud.quit_requested.connect(go_to_menu)
+	_hud.pause_requested.connect(_open_pause_menu)
+	_hud.resume_requested.connect(_close_pause_menu)
 	get_viewport().size_changed.connect(_on_viewport_resized)
 	_layout()
 	start()
@@ -103,6 +134,9 @@ func _process(delta: float) -> void:
 
 ## 开始新的一局（准备阶段）。测试和「再甩一局」都走这里。
 func start() -> void:
+	_overlay_open = false
+	_hud.hide_game_menu()
+	_set_entities_visible(true)
 	if _seed == 0:
 		_rng.randomize()
 	else:
@@ -125,6 +159,7 @@ func start() -> void:
 	_throws = 0
 	_pot_hits = {}
 	_announced_combo.clear()
+	_announced_panic.clear()
 	_end_timer = 0.0
 	_end_reason = ""
 	_result = {}
@@ -132,6 +167,9 @@ func start() -> void:
 	_pointer_down = false
 	_pointer_id = -1
 	_shake = 0.0
+	_last_lane = ""
+	_last_entry_dir = Vector2.ZERO
+	_boss_throws = 0
 	position = Vector2.ZERO
 	for pot in _pots:
 		pot.hibernate()
@@ -158,11 +196,45 @@ func go_to_menu() -> void:
 	get_tree().change_scene_to_file(GameConfig.MENU_SCENE)
 
 
+# ---------------------------------------------------------------- 非游戏界面（暂停 / 图鉴 / 说明 / 设置）
+
+## 打开暂停菜单：冻结玩法 + 藏起 Boss / 锅 / 受击特效，面板成为最上层内容
+func _open_pause_menu() -> void:
+	if _overlay_open or not (_state == State.PLAYING or _state == State.COUNTDOWN):
+		return
+	_overlay_open = true
+	_held = null
+	_pointer_down = false
+	_pointer_id = -1
+	_set_entities_visible(false)
+	_hud.show_game_menu()
+
+
+func _close_pause_menu() -> void:
+	if not _overlay_open:
+		return
+	_overlay_open = false
+	_hud.hide_game_menu()
+	_set_entities_visible(true)
+
+
+## 藏 / 显示「游戏里的实体」：Boss、锅层、受击特效层。
+## 背景（办公室）留着，面板依然用半透明底压在它上面。
+func _set_entities_visible(shown: bool) -> void:
+	_boss.visible = shown
+	_pot_layer.visible = shown
+	_fx.visible = shown
+
+
 # ---------------------------------------------------------------- 主循环
 
 ## 推进一帧（测试直接调用它，不用真的等 45 秒）
 func tick(delta: float) -> void:
 	_pointer_delta = maxf(delta, 1.0 / 240.0)
+	# 非游戏界面开着：玩法完全不推进（Boss / 锅 / 特效都藏起来了），只让 HUD 继续刷新
+	if _overlay_open:
+		_hud.tick(delta)
+		return
 	if _shake > 0.0:
 		_shake = maxf(_shake - delta * 3.2, 0.0)
 		_world.position = Vector2(_rng.randf_range(-1.0, 1.0), _rng.randf_range(-1.0, 1.0)) \
@@ -223,6 +295,12 @@ func _tick_playing(delta: float) -> void:
 			else:
 				_spawn_timer = 0.25
 
+	# 老板甩锅：锅先被攥在手里蓄力，手臂前甩那一帧从手部脱手飞出去
+	for pot in _pots:
+		if pot.is_winding_up():
+			if pot.windup_step(delta, _boss.throw_hand_position()):
+				pot.release_from_hand(_boss.throw_hand_position())
+
 	# 锅的行为与判定
 	for pot in _pots:
 		if not pot.is_active():
@@ -271,7 +349,8 @@ func _check_pot(pot: BlamePot, delta: float) -> void:
 
 # ---------------------------------------------------------------- 生成
 
-## 挑一口空闲的锅开始工作（池子里没有空闲的就这一帧不生成）
+## 老板甩一口锅：先选方向 → 锅出现在老板手里蓄力（WINDUP）→ 手臂前甩那一帧脱手飞出去。
+## 池子里没有空闲的锅就这一帧不生成。
 func _spawn_pot(forced_id: String = "") -> BlamePot:
 	var pot := _free_pot()
 	if pot == null:
@@ -284,20 +363,67 @@ func _spawn_pot(forced_id: String = "") -> BlamePot:
 	if type == null:
 		type = PotData.get_pot("normal")
 	var speed_scale := float(phase["speed_scale"]) * _rng.randf_range(0.92, 1.12)
-	var life := type.life_seconds * float(phase["life_scale"])
-	var boss_pos := _boss.global_position
-	var start := boss_pos + Vector2(
-		_rng.randf_range(-_boss.body_radius() * 1.1, _boss.body_radius() * 1.1),
-		_boss.body_radius() * 0.35)
-	var target := Vector2(
-		_rng.randf_range(_field.position.x + 90.0, _field.end.x - 90.0),
-		_rng.randf_range(_field.position.y + 90.0, _field.end.y - 90.0))
-	var direction := (target - start).normalized()
+	# 老板挑一个方向：不和上一口同向，夹角也不能太小（「随机但看得出区别」）
+	var zone := _pick_throw_zone()
+	var side := float(zone["side"])
+	var vertical := float(zone["vertical"])
+	var release := _boss.release_point_for(side, vertical)
+	var target := _throw_target(side, vertical)
+	var direction := (target - release).normalized()
+	var speed := clampf(release.distance_to(target) / THROW_FLIGHT_SECONDS, 900.0, 1800.0)
+	_last_lane = str(zone["id"])
+	_last_entry_dir = _zone_direction(zone)
+	_boss_throws += 1
 	pot.wander = 0.34 if pot_id == "pan" else (0.42 if pot_id == "broken" else 0.22)
-	pot.launch(type, PotData.blame_line(pot_id, _rng), _field, start, direction,
-		980.0, life, _pot_scale)
 	pot.drift_speed = type.drift_speed * speed_scale
+	# 老板先进入甩锅动作，锅再出现在他手上（顺序反过来的话，锅会被摆到上一只手的位置）
+	_boss.begin_throw(str(zone["id"]), direction, vertical)
+	pot.begin_windup(type, PotData.blame_line(pot_id, _rng), str(zone["id"]), direction,
+		speed, THROW_WINDUP_SECONDS, _pot_scale, _field, target)
+	pot.pin_to(_boss.throw_hand_position())
+	# 开局前几口给一句「甩锅！」提示，教玩家「看老板的动作预判方向」
+	if _boss_throws <= THROW_CUE_HINT_COUNT:
+		_fx.spawn_damage(_boss.throw_hand_position()
+			+ Vector2(0.0, -_pot_scale * 80.0), "甩锅！", Palette.BLAIM, 30.0)
 	return pot
+
+
+## 挑一个「不和上一口重复、夹角也够大」的甩锅方向
+func _pick_throw_zone() -> Dictionary:
+	var candidates: Array = []
+	for zone in THROW_ZONES:
+		if str(zone["id"]) == _last_lane:
+			continue
+		if _last_entry_dir != Vector2.ZERO \
+				and _zone_direction(zone).dot(_last_entry_dir) > THROW_REPEAT_DOT:
+			continue
+		candidates.append(zone)
+	if candidates.is_empty():
+		for zone in THROW_ZONES:
+			if str(zone["id"]) != _last_lane:
+				candidates.append(zone)
+	if candidates.is_empty():
+		candidates = THROW_ZONES.duplicate()
+	return candidates[_rng.randi_range(0, candidates.size() - 1)]
+
+
+## 这个方向大致会让锅飞向哪（只用来判断「两个方向是不是太像」）
+func _zone_direction(zone: Dictionary) -> Vector2:
+	var side := float(zone["side"])
+	var vertical := float(zone["vertical"])
+	return Vector2(side * 0.62, 0.78 + 0.22 * vertical).normalized()
+
+
+## 方向 → 玩家区域里的落点（左上 / 左 / 左下 / 右上 / 右 / 右下）
+func _throw_target(side: float, vertical: float) -> Vector2:
+	var f := _field
+	var x := f.position.x + f.size.x * (0.22 if side < 0.0 else 0.78)
+	var y := f.position.y + f.size.y * (0.22 + 0.28 * (vertical + 1.0))
+	x += _rng.randf_range(-f.size.x * 0.07, f.size.x * 0.07)
+	y += _rng.randf_range(-f.size.y * 0.06, f.size.y * 0.06)
+	return Vector2(
+		clampf(x, f.position.x + f.size.x * 0.10, f.end.x - f.size.x * 0.10),
+		clampf(y, f.position.y + f.size.y * 0.12, f.end.y - f.size.y * 0.12))
 
 
 func _free_pot() -> BlamePot:
@@ -385,6 +511,9 @@ func _hit(pot: BlamePot) -> void:
 		_boss.hit_radius() * (0.9 + 0.5 * strength), 6.0)
 	AudioManager.play(sound)
 	AudioManager.play_combo(_combo)
+	# 不同锅 → 不同的卡通惨叫；连击越高老板越慌
+	_play_boss_voice(type.id)
+	_announce_panic()
 	if damage < 15:
 		Haptics.medium()
 	else:
@@ -434,6 +563,24 @@ func _announce_combo() -> void:
 		AudioManager.play("combo", 1.0 + 0.05 * float(threshold))
 
 
+## 老板挨锅时按锅的类型喊一声（音高随连击略微升高，配合「越来越慌」）
+func _play_boss_voice(pot_id: String) -> void:
+	var voice := GameConfig.voice_for_pot(pot_id)
+	var pitch := 1.0 + 0.03 * float(mini(_combo, 12)) / 12.0
+	AudioManager.play_voice(str(voice["sound"]), pitch)
+
+
+## 连击到一定档位 → 老板的慌乱台词（配合同一句惨叫的占位音）
+func _announce_panic() -> void:
+	for entry in GameConfig.BOSS_PANIC:
+		var threshold := int(entry["combo"])
+		if _combo < threshold or _announced_panic.has(threshold):
+			continue
+		_announced_panic.append(threshold)
+		_hud.show_toast("老板：%s" % str(entry["text"]), Palette.DANGER)
+		AudioManager.play_voice(str(entry["sound"]), 1.0 + 0.04 * float(threshold) / 10.0)
+
+
 # ---------------------------------------------------------------- 结束与结算
 
 func _begin_end(reason: String) -> void:
@@ -444,6 +591,10 @@ func _begin_end(reason: String) -> void:
 	_state = State.ENDING
 	_pointer_down = false
 	_held = null
+	# 还在老板手里蓄力的锅：这一局已经结束了，直接收回（不会飞进场地、也不算失误）
+	for pot in _pots:
+		if pot.is_winding_up():
+			pot.hibernate()
 	if reason == "ko":
 		_boss.ko()
 		_hud.show_banner(GameConfig.KO_BANNER, Palette.DANGER)
@@ -461,6 +612,10 @@ func _begin_end(reason: String) -> void:
 func _begin_result() -> void:
 	if _state == State.RESULT:
 		return
+	if _overlay_open:
+		_overlay_open = false
+		_hud.hide_game_menu()
+		_set_entities_visible(true)
 	_state = State.RESULT
 	_result = _build_result()
 	var changes := ProgressManager.register_game(_result)
@@ -553,7 +708,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func pointer_press(point: Vector2, id: int = 0) -> void:
-	if _state != State.PLAYING or _pointer_down:
+	if _overlay_open or _state != State.PLAYING or _pointer_down:
 		return
 	_pointer_down = true
 	_pointer_id = id
@@ -571,7 +726,7 @@ func pointer_press(point: Vector2, id: int = 0) -> void:
 
 
 func pointer_move(point: Vector2, id: int = 0) -> void:
-	if not _pointer_down or id != _pointer_id:
+	if _overlay_open or not _pointer_down or id != _pointer_id:
 		return
 	_last_pointer_pos = _pointer_pos
 	_pointer_pos = point
@@ -579,7 +734,7 @@ func pointer_move(point: Vector2, id: int = 0) -> void:
 
 
 func pointer_release(point: Vector2, id: int = 0) -> void:
-	if not _pointer_down or id != _pointer_id:
+	if _overlay_open or not _pointer_down or id != _pointer_id:
 		return
 	_pointer_pos = point
 	_pointer_velocity = (point - _last_pointer_pos) / _pointer_delta
@@ -749,6 +904,24 @@ func hud() -> BlameHud:
 	return _hud
 
 
+## 有没有「非游戏界面」开着（自动化测试用来确认 Boss / 锅被藏起来了）
+func is_overlay_open() -> bool:
+	return _overlay_open
+
+
+func game_menu() -> GameMenu:
+	return _hud.game_menu()
+
+
+## 测试 / 调试用：直接开关暂停菜单（等价于点「暂停」）
+func open_pause_menu() -> void:
+	_open_pause_menu()
+
+
+func close_pause_menu() -> void:
+	_close_pause_menu()
+
+
 func fx_layer() -> FxLayer:
 	return _fx
 
@@ -763,6 +936,24 @@ func shake_amount() -> float:
 
 func announced_shouts() -> int:
 	return _announced_combo.size()
+
+
+func announced_panics() -> int:
+	return _announced_panic.size()
+
+
+## 老板最近一次往哪个方向甩锅（left_upper / left_mid / left_lower / right_*）
+func last_entry_lane() -> String:
+	return _last_lane
+
+
+func last_throw_lane() -> String:
+	return _last_lane
+
+
+## 老板这一局一共甩了几口锅（开局前几口会带「甩锅！」提示）
+func boss_throw_count() -> int:
+	return _boss_throws
 
 
 func held_pot() -> BlamePot:
@@ -804,8 +995,8 @@ func place_pot(pot_id: String, at: Vector2) -> BlamePot:
 		pot = _spawn_pot(pot_id)
 	if pot == null:
 		return null
-	pot.global_position = at
-	pot.in_field = true
+	# 直接落到玩家区域里（测试 / 调试用）：跳过「老板甩锅」那一段
+	pot.drop_into_field(at)
 	return pot
 
 

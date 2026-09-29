@@ -71,7 +71,33 @@ const SOUNDS := {
 	"result": "res://assets/audio/result.wav",
 	"new_record": "res://assets/audio/new_record.wav",
 	"unlock": "res://assets/audio/unlock.wav",
+	# 老板受击「惨叫」：按锅的类型区分，全部是本地合成的卡通化人声占位
+	# （不是真实人声素材，也永远不会从网络下载任何资源）。
+	"voice_normal": "res://assets/audio/voice_normal.wav",
+	"voice_iron": "res://assets/audio/voice_iron.wav",
+	"voice_pan": "res://assets/audio/voice_pan.wav",
+	"voice_pressure": "res://assets/audio/voice_pressure.wav",
+	"voice_broken": "res://assets/audio/voice_broken.wav",
+	"voice_panic": "res://assets/audio/voice_panic.wav",
 }
+
+# ---- 老板受击语音 -----------------------------------------------------------
+## 不同锅 → 不同惨叫。文案只是「这句惨叫想表达什么」，实际播放的是同名的卡通合成音。
+const POT_VOICES := {
+	"normal": {"sound": "voice_normal", "text": "哎哟！"},
+	"iron": {"sound": "voice_iron", "text": "啊——！"},
+	"pan": {"sound": "voice_pan", "text": "疼疼疼！"},
+	"pressure": {"sound": "voice_pressure", "text": "我的头！"},
+	"broken": {"sound": "voice_broken", "text": "你干什么！"},
+}
+
+## 连击越高，老板越慌：到点播一次「慌乱惨叫」并在操作区打一行字
+const BOSS_PANIC := [
+	{"combo": 3, "sound": "voice_panic", "text": "等等！"},
+	{"combo": 6, "sound": "voice_panic", "text": "别打了！"},
+	{"combo": 10, "sound": "voice_panic", "text": "别甩了！"},
+	{"combo": 15, "sound": "voice_panic", "text": "我错了！"},
+]
 
 # ---- 文案
 const READY_HINT := "点击锅 → 拖到老板身上 → 甩回去！"
@@ -85,3 +111,8 @@ static func sound_keys() -> Array:
 	var keys := SOUNDS.keys()
 	keys.sort()
 	return keys
+
+
+## 这口锅对应的受击惨叫（找不到就退回普通锅的）
+static func voice_for_pot(pot_id: String) -> Dictionary:
+	return POT_VOICES.get(pot_id, POT_VOICES["normal"])

@@ -44,7 +44,8 @@ func _test_project_settings() -> void:
 
 func _test_sounds() -> void:
 	var keys := GameConfig.sound_keys()
-	_check("音效表里有 21 个音效", keys.size() == 21, str(keys.size()))
+	_check("音效表里有 27 个音效（21 个音效 + 6 个老板受击惨叫）", keys.size() == 27,
+		str(keys.size()))
 	var missing: Array = []
 	for key in keys:
 		if not ResourceLoader.exists(str(GameConfig.SOUNDS[key])):
@@ -55,6 +56,10 @@ func _test_sounds() -> void:
 	_check("每个音效都能取到播放接口",
 		AudioManager.has_sound("hit_heavy") and AudioManager.has_sound("boss_ko")
 		and AudioManager.has_sound("unlock"))
+	_check("五种锅各有自己的受击惨叫，还有一句「慌乱」惨叫",
+		AudioManager.has_sound("voice_normal") and AudioManager.has_sound("voice_iron")
+		and AudioManager.has_sound("voice_pan") and AudioManager.has_sound("voice_pressure")
+		and AudioManager.has_sound("voice_broken") and AudioManager.has_sound("voice_panic"))
 
 
 func _test_chinese_font() -> void:

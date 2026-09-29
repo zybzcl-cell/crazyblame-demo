@@ -35,13 +35,23 @@ const PITCH_VARIATION := {
 	"miss": 0.06,
 	"combo": 0.03,
 	"ui_click": 0.04,
+	"voice_normal": 0.07,
+	"voice_iron": 0.06,
+	"voice_pan": 0.07,
+	"voice_pressure": 0.06,
+	"voice_broken": 0.07,
+	"voice_panic": 0.08,
 }
+
+## 老板惨叫的全局最小间隔：连续命中时也不会糊成一团（需求里明确要求「别太吵」）
+const VOICE_COOLDOWN := 0.24
 
 var _players: Array[AudioStreamPlayer] = []
 var _streams := {}
 var _last_played := {}
 var _rng := RandomNumberGenerator.new()
 var _audio_available := true
+var _voice_last := -999.0
 ## 已经播放过的音效次数（测试用：可以确认「命中真的有声音」）
 var play_counts := {}
 
@@ -85,6 +95,27 @@ func play(key: String, pitch: float = 1.0) -> void:
 	if throttle > 0.0 and now - float(_last_played.get(key, -999.0)) < throttle:
 		return
 	_last_played[key] = now
+	_emit(key, stream, pitch)
+
+
+## 老板受击语音：与音效分开做「全局限流」——
+## 命中再密，也至少隔 VOICE_COOLDOWN 秒才喊一声，并且每句音高随机，避免机械重复。
+func play_voice(key: String, pitch: float = 1.0) -> void:
+	var stream: AudioStream = _streams.get(key)
+	if stream == null:
+		return
+	play_counts[key] = int(play_counts.get(key, 0)) + 1
+	if not _audio_available or is_muted():
+		return
+	var now := float(Time.get_ticks_msec()) / 1000.0
+	if now - _voice_last < VOICE_COOLDOWN:
+		return
+	_voice_last = now
+	_emit(key, stream, pitch * _rng.randf_range(0.96, 1.05))
+
+
+## 真正把流丢进一个空闲播放器（随机音高由这里统一处理）
+func _emit(key: String, stream: AudioStream, pitch: float) -> void:
 	for player in _players:
 		if not player.playing:
 			player.stream = stream

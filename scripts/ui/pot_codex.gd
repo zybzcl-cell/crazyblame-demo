@@ -79,6 +79,13 @@ func refresh() -> void:
 		_list.add_child(_make_card(pot))
 
 
+## 面板上所有会显示文字的控件（构图 / 字体测试用）
+func text_nodes() -> Array:
+	if _panel == null:
+		return []
+	return [_panel.get_node("Title"), _panel.get_node("Tip"), _panel.get_node("Close")]
+
+
 func _make_card(pot: PotType) -> Panel:
 	var card := Panel.new()
 	card.custom_minimum_size = Vector2(0.0, _size.y * 0.098)

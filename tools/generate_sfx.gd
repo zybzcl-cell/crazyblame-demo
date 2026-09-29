@@ -6,6 +6,10 @@ extends Node
 ##
 ## 每个音效都是 16 bit / 44.1kHz / 单声道 WAV，0.05 ~ 1.0 秒，
 ## 结尾有 3 毫秒淡出，避免播放时爆音；噪声用固定种子，保证每次生成结果一致。
+##
+## 除了「音效」之外，这里还合成 6 个**卡通化的人声惨叫**（老板受击语音）：
+## 用锯齿 / 方波当声带 + 两个共振峰当元音，做出「哎哟 / 啊—— / 疼疼疼 / 我的头 /
+## 你干什么 / 慌乱」这几种夸张的卡通嗓音。它们**不是**真人采样，也不下载任何第三方素材。
 
 const SAMPLE_RATE := 44100
 const OUT_DIR := "res://assets/audio"
@@ -40,6 +44,12 @@ func _ready() -> void:
 		"result": _result(),
 		"new_record": _new_record(),
 		"unlock": _unlock(),
+		"voice_normal": _voice_normal(),
+		"voice_iron": _voice_iron(),
+		"voice_pan": _voice_pan(),
+		"voice_pressure": _voice_pressure(),
+		"voice_broken": _voice_broken(),
+		"voice_panic": _voice_panic(),
 	}
 	var failed := 0
 	for key in sounds.keys():
@@ -251,6 +261,65 @@ func _unlock() -> AudioStreamWAV:
 	return _to_stream(buf)
 
 
+# ---------------------------------------------------------------- 老板受击「惨叫」
+# 全部靠程序合成：声带（锯齿 + 方波）+ 两个共振峰（元音色）+ 颤音。
+# 目标是「夸张、滑稽、解压的卡通嗓子」，不是写实的人体受伤声音。
+
+## 普通锅：「哎哟」——短促的两节下滑
+func _voice_normal() -> AudioStreamWAV:
+	var buf := _buffer(0.42)
+	_voiced(buf, 0.0, 0.16, 250.0, 208.0, 0.72, 0.010, 1.4, 6.0, 0.030)
+	_voiced(buf, 0.17, 0.20, 228.0, 148.0, 0.66, 0.012, 1.5, 5.5, 0.030)
+	return _to_stream(buf)
+
+
+## 铁锅：「啊——」——又长又闷的一记惨叫
+func _voice_iron() -> AudioStreamWAV:
+	var buf := _buffer(0.72)
+	_voiced(buf, 0.0, 0.64, 344.0, 126.0, 0.82, 0.016, 1.1, 6.5, 0.055)
+	_tone(buf, 0.0, 0.30, 170.0, 70.0, 0.28, "sine", 0.004, 1.3)
+	_noise(buf, 0.0, 0.22, 0.12, 0.010, 2.0, 2600.0, 700.0)
+	return _to_stream(buf)
+
+
+## 平底锅：「疼疼疼」——三下急促的短音
+func _voice_pan() -> AudioStreamWAV:
+	var buf := _buffer(0.56)
+	for i in 3:
+		var start := float(i) * 0.15
+		_voiced(buf, start, 0.12, 286.0 - float(i) * 12.0, 238.0, 0.64, 0.008, 1.6,
+			7.0, 0.030)
+	return _to_stream(buf)
+
+
+## 压力锅：「我的头」——先顿一下，再一整句掉下去
+func _voice_pressure() -> AudioStreamWAV:
+	var buf := _buffer(0.64)
+	_voiced(buf, 0.0, 0.14, 232.0, 214.0, 0.62, 0.008, 1.5, 6.0, 0.020)
+	_voiced(buf, 0.15, 0.38, 306.0, 108.0, 0.82, 0.012, 1.2, 6.0, 0.045)
+	_tone(buf, 0.15, 0.32, 156.0, 58.0, 0.34, "sine", 0.004, 1.4)
+	return _to_stream(buf)
+
+
+## 破锅：「你干什么」——四个音节、尾音往上挑（不服气）
+func _voice_broken() -> AudioStreamWAV:
+	var buf := _buffer(0.68)
+	var f0 := [198.0, 220.0, 236.0, 268.0]
+	for i in 4:
+		_voiced(buf, float(i) * 0.145, 0.12, f0[i], f0[i] * 0.97, 0.62, 0.006, 1.5,
+			6.5, 0.030)
+	return _to_stream(buf)
+
+
+## 连击慌乱：往上窜的「哇——」，越高越慌
+func _voice_panic() -> AudioStreamWAV:
+	var buf := _buffer(0.44)
+	_voiced(buf, 0.0, 0.36, 296.0, 726.0, 0.78, 0.006, 1.2, 9.0, 0.065)
+	_tone(buf, 0.0, 0.32, 920.0, 1820.0, 0.22, "triangle", 0.006, 1.6)
+	_noise(buf, 0.0, 0.10, 0.14, 0.002, 2.4, 5000.0, 1500.0)
+	return _to_stream(buf)
+
+
 # ---------------------------------------------------------------- 合成工具
 
 func _buffer(duration: float) -> Array:
@@ -321,6 +390,42 @@ func _noise(
 		if attack > 0.0 and t < attack:
 			envelope *= t / attack
 		buf[index] = float(buf[index]) + prev * amp * envelope
+
+
+## 叠加一段「人声」：声带（锯齿 + 方波混合）叠加两个共振峰，外加一点颤音。
+## f0_from → f0_to 是基频扫动，共振峰按基频的固定倍数走（≈ 元音 /a/），
+## 所以听起来是「有人味儿」的卡通嗓，而不是纯音效。
+func _voiced(
+	buf: Array, start: float, duration: float, f0_from: float, f0_to: float, amp: float,
+	attack: float, decay_power: float, vibrato_hz: float = 6.0, vibrato_depth: float = 0.03
+) -> void:
+	var start_index := int(start * float(SAMPLE_RATE))
+	var count := int(duration * float(SAMPLE_RATE))
+	var phase := 0.0
+	var formant_1 := 0.0
+	var formant_2 := 0.0
+	for i in count:
+		var index := start_index + i
+		if index < 0:
+			continue
+		if index >= buf.size():
+			break
+		var progress := float(i) / float(maxi(count, 1))
+		var t := float(i) / float(SAMPLE_RATE)
+		var vibrato := 1.0 + vibrato_depth * sin(TAU * vibrato_hz * t) \
+			* minf(progress * 6.0, 1.0)
+		var f0 := lerpf(f0_from, f0_to, progress) * vibrato
+		phase += TAU * f0 / float(SAMPLE_RATE)
+		# 声带：锯齿波打底 + 一点方波，听上去更「糙」更像喊
+		var glottal := (fposmod(phase, TAU) / TAU * 2.0 - 1.0) * 0.7 \
+			+ (1.0 if sin(phase) >= 0.0 else -1.0) * 0.3
+		formant_1 += TAU * f0 * 3.2 / float(SAMPLE_RATE)
+		formant_2 += TAU * f0 * 7.5 / float(SAMPLE_RATE)
+		var formants := sin(formant_1) * 0.45 + sin(formant_2) * 0.22
+		var envelope := pow(1.0 - progress, decay_power)
+		if attack > 0.0 and t < attack:
+			envelope *= t / attack
+		buf[index] = float(buf[index]) + (glottal * 0.5 + formants) * amp * envelope
 
 
 ## 归一化到统一峰值并转成 16 bit WAV

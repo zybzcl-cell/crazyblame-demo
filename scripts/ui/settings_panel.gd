@@ -136,3 +136,11 @@ func vibration_button() -> Button:
 
 func reset_button() -> Button:
 	return _reset_button
+
+
+## 面板上所有会显示文字的控件（构图 / 字体测试用）
+func text_nodes() -> Array:
+	if _panel == null:
+		return []
+	return [_sound_button, _vibration_button, _stats, _reset_button, _save_path,
+		_panel.get_node("Close")]

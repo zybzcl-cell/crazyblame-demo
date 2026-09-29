@@ -172,8 +172,13 @@ func _test_spawn_flow() -> void:
 	skip_countdown(game)
 	var pot := game.force_spawn("normal")
 	_check("能生成一口锅", pot != null and pot.pot_id == "normal")
-	_check("锅从老板那边飞出来（一开始不在场地里、也抓不到）",
+	_check("锅从场地外飞进来（一开始不在场地里、也抓不到）",
 		not pot.in_field and not pot.can_grab())
+	_check("锅记下了自己是从哪个方向飞进来的", not pot.entry_lane.is_empty(),
+		pot.entry_lane)
+	_check("出场点还在屏幕里（不会凭空出现在屏幕外）",
+		Rect2(Vector2.ZERO, get_viewport().get_visible_rect().size).has_point(
+			pot.global_position), str(pot.global_position))
 	advance(game, 1.2)
 	_check("飞进场地后就可以抓了", pot.in_field and pot.can_grab())
 	_check("场地里飘的速度换成了这口锅自己的飘移速度",
