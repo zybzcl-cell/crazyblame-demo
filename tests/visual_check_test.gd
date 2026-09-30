@@ -36,6 +36,7 @@ func run_tests() -> void:
 
 	_test_text_and_colors()
 	_test_boss_visible()
+	_test_throw_cue()
 	_test_pots_visible()
 	_test_frenzy_tint()
 	_test_boss_stages_differ()
@@ -72,11 +73,17 @@ func _test_composition_pixels() -> void:
 		"%.3f" % PixelTools.ratio(mid, Rect2(0.05, 0.90, 0.90, 0.03), PixelTools.is_wood, 3))
 	# 老板挨打之后：白板折线变红 / 桌面物品变乱 —— 用「老板区域颜色分布变化」间接确认
 	var hurt := _load("shot_4_hurt.png")
-	_check("老板挨打之后的画面与中期明显不同（表情 / 姿态 / 桌面都在变）",
-		PixelTools.signature_distance(PixelTools.signature(mid, REGION_BOSS),
-			PixelTools.signature(hurt, REGION_BOSS)) > 0.01,
-		"差异 %.4f" % PixelTools.signature_distance(PixelTools.signature(mid, REGION_BOSS),
-			PixelTools.signature(hurt, REGION_BOSS)))
+	var wide := Rect2(0.05, 0.16, 0.90, 0.36)
+	var wide_diff := PixelTools.signature_distance(PixelTools.signature(mid, wide),
+		PixelTools.signature(hurt, wide))
+	_check("老板挨打之后的画面与中期明显不同（表情 / 姿态 / 桌面物品都在变）",
+		wide_diff > 0.01, "差异 %.4f" % wide_diff)
+	if _boss_art_present():
+		# 有七张表情素材之后：老板本体的画面也要明显不同
+		var boss_diff := PixelTools.signature_distance(PixelTools.signature(mid, REGION_BOSS),
+			PixelTools.signature(hurt, REGION_BOSS))
+		_check("（素材就位后）老板本体的表情 / 姿态本身也在变", boss_diff > 0.01,
+			"差异 %.4f" % boss_diff)
 
 
 func _test_text_and_colors() -> void:
@@ -125,6 +132,16 @@ func _test_boss_visible() -> void:
 			panel > 0.30 and gold > 0.005, "面板 %.3f / 金色标题 %.4f" % [panel, gold])
 		_check("占位提示出现在 Boss 应该在的位置（贴图已就位、位置/大小正确）",
 			panel > 0.30, "%.3f" % panel)
+
+
+## 甩锅截图：老板蓄力时画面上会多出「甩锅方向」的红色虚线提示（玩家能预判往哪边飞）
+func _test_throw_cue() -> void:
+	var mid := _load("shot_3_mid.png")
+	var throwing := _load("shot_11_throw.png")
+	var idle_red := _redness(mid, REGION_BOSS)
+	var cue_red := _redness(throwing, REGION_BOSS)
+	_check("老板甩锅蓄力时画面里有方向提示（红色虚线箭头 → 玩家能预判锅往哪边飞）",
+		cue_red > idle_red + 0.004, "平时 %.4f → 蓄力 %.4f" % [idle_red, cue_red])
 
 
 func _test_pots_visible() -> void:

@@ -64,9 +64,74 @@ func _draw() -> void:
 	# ---- 这一口锅的撞击符号
 	var impact_time := host.impact_time()
 	if impact_time > 0.0:
+		_draw_hit_face(r, art, face, host.hit_face_ratio())
 		_draw_impact(host.impact_type(), r, face, impact_time)
+	# ---- 甩锅方向提示（虚线箭头 + 头顶「！」）：属于演出 FX，不是角色本体
+	if host.is_winding_up():
+		_draw_throw_cue(r)
 	# ---- 阶段特效（得意闪光 / 问号 / 生气 / 冒烟 / 汗 / 星星）
 	_draw_stage_effects(stage, r, head)
+
+
+## 甩锅方向提示：从手部指向目标方向的虚线箭头；刚注意到时头上冒「！」
+func _draw_throw_cue(r: float) -> void:
+	if host == null:
+		return
+	var progress := host.windup_ratio()
+	var from := to_local(host.throw_hand_position())
+	var dir := host.throw_cue_dir_local()
+	var length := r * (1.5 + 1.2 * progress)
+	var color := Color(Palette.DANGER, 0.22 + 0.55 * progress)
+	var dashes := 5
+	for i in dashes:
+		var t0 := float(i) / float(dashes)
+		var t1 := minf(t0 + 0.55 / float(dashes), 1.0)
+		draw_line(from + dir * (length * t0), from + dir * (length * t1), color,
+			maxf(r * 0.05, 2.6), true)
+	var tip := from + dir * length
+	var side := dir.orthogonal()
+	draw_line(tip, tip - dir * r * 0.26 + side * r * 0.17, color, maxf(r * 0.055, 2.8), true)
+	draw_line(tip, tip - dir * r * 0.26 - side * r * 0.17, color, maxf(r * 0.055, 2.8), true)
+	if host.is_noticing():
+		var pop := 1.0 + 0.5 * (1.0 - host.tick_windup_time() / maxf(BlameBoss.THROW_NOTICE, 0.001))
+		var at := host.art().anchor("head") * r + Vector2(host.throw_side() * r * 0.34, -r * 1.06)
+		var size := r * 0.30 * pop
+		draw_line(at + Vector2(0.0, -size * 0.40), at + Vector2(0.0, size * 0.35),
+			Palette.ACCENT, maxf(r * 0.10, 4.0), true)
+		draw_circle(at + Vector2(0.0, size * 0.78), maxf(r * 0.055, 2.4), Palette.ACCENT)
+
+
+## 换素材之前的「受击表情」补充：按锅型画 X 眼 / >< / 转圈眼 / 吐舌头
+## （正式表情请画进 boss_stage_*.png / boss_throw_*.png；这层只是让打击反馈不丢）
+func _draw_hit_face(r: float, art: BossArt, face: Vector2, ratio: float) -> void:
+	if host == null or ratio <= 0.0:
+		return
+	var alpha := clampf(ratio / 0.38, 0.0, 1.0)
+	var eye_y := face.y - r * 0.20
+	var eye_dx := maxf(art.anchor("head_radius").x * 0.52, 0.30) * r
+	var ink := Color(0.09, 0.08, 0.11, 0.95 * alpha)
+	match host.impact_type():
+		"pan":
+			for side in [-1.0, 1.0]:
+				var e := Vector2(face.x + side * eye_dx, eye_y)
+				draw_line(e + Vector2(-r * 0.16, -r * 0.11), e, ink, maxf(r * 0.05, 2.2), true)
+				draw_line(e, e + Vector2(-r * 0.16, r * 0.11), ink, maxf(r * 0.05, 2.2), true)
+				draw_line(e + Vector2(r * 0.16, -r * 0.11), e, ink, maxf(r * 0.05, 2.2), true)
+				draw_line(e, e + Vector2(r * 0.16, r * 0.11), ink, maxf(r * 0.05, 2.2), true)
+		"pressure", "broken":
+			for side in [-1.0, 1.0]:
+				var e := Vector2(face.x + side * eye_dx, eye_y)
+				draw_arc(e, r * 0.11, host.tick_time() * 8.0,
+					host.tick_time() * 8.0 + PI * 1.5, 14, ink, maxf(r * 0.04, 1.8), true)
+			if host.impact_type() == "broken":
+				draw_circle(face + Vector2(0.0, r * 0.30), r * 0.09, Color("e0655a", alpha))
+		_:
+			for side in [-1.0, 1.0]:
+				var e := Vector2(face.x + side * eye_dx, eye_y)
+				draw_line(e + Vector2(-r * 0.13, -r * 0.13), e + Vector2(r * 0.13, r * 0.13),
+					ink, maxf(r * 0.055, 2.4), true)
+				draw_line(e + Vector2(r * 0.13, -r * 0.13), e + Vector2(-r * 0.13, r * 0.13),
+					ink, maxf(r * 0.055, 2.4), true)
 
 
 func _draw_impact(kind: String, r: float, face: Vector2, time_left: float) -> void:

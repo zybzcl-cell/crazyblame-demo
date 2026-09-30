@@ -172,6 +172,10 @@ func _test_throw_action() -> void:
 		"手部局部坐标 %s" % str(boss.to_local_point(pot.global_position)))
 	_check("蓄力期间玩家抓不到这口锅（还没出手）",
 		not pot.can_grab() and game.held_pot() == null)
+	_check("蓄力期间会画「甩锅方向」提示（玩家能预判往哪边飞）",
+		game.boss().is_winding_up() and game.boss().throw_cue_dir_local().length() > 0.5
+		and game.boss().throw_direction().length() > 0.5,
+		str(game.boss().throw_direction()))
 	_check("老板甩锅时会记数（开局前几口有「甩锅！」提示）",
 		game.boss_throw_count() >= 1, str(game.boss_throw_count()))
 

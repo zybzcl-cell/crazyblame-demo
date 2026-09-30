@@ -104,6 +104,7 @@ var _impact_time := 0.0
 ## ---- 甩锅动作状态
 var _throw_time := -1.0
 var _throw_lane := ""
+var _throw_dir := Vector2.DOWN
 var _throw_side := 1.0
 var _throw_vertical := 0.0
 var _throw_count := 0
@@ -328,6 +329,16 @@ func nose_hit() -> float:
 	return _nose_hit
 
 
+## 受击表情的剩余时间（0~0.38s）
+func hit_face_ratio() -> float:
+	return _hit_face
+
+
+## 甩锅动作已经走了多少秒（<0 = 没在甩）
+func tick_windup_time() -> float:
+	return maxf(_throw_time, 0.0)
+
+
 func wobble_amount() -> float:
 	return wobble
 
@@ -520,6 +531,7 @@ func set_stage_silent(index: int) -> void:
 ## 开始一次甩锅：lane 决定往哪边、哪个高度甩，direction 是「锅飞出去的方向」（世界坐标）。
 func begin_throw(lane: String, direction: Vector2, vertical: float) -> void:
 	_throw_lane = lane
+	_throw_dir = direction.normalized() if direction.length() > 0.001 else Vector2.DOWN
 	_throw_side = -1.0 if lane.begins_with("left") else 1.0
 	_throw_vertical = clampf(vertical, -1.0, 1.0)
 	_throw_time = 0.0
@@ -551,6 +563,16 @@ func throw_lane() -> String:
 
 func throw_side() -> float:
 	return _throw_side
+
+
+## 这一口锅飞出去的方向（世界坐标单位向量）
+func throw_direction() -> Vector2:
+	return _throw_dir
+
+
+## 方向提示线用的本地方向（把整体倾斜还原掉）
+func throw_cue_dir_local() -> Vector2:
+	return _throw_dir.rotated(-_t_lean).normalized()
 
 
 func throw_count() -> int:
