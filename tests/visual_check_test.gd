@@ -12,7 +12,7 @@ const SHOT_DIR := "res://tests/.tmp"
 const SHOTS := [
 	"shot_1_menu.png", "shot_2_start.png", "shot_3_mid.png", "shot_4_hurt.png",
 	"shot_5_frenzy.png", "shot_6_result.png", "shot_7_codex.png", "shot_8_settings.png",
-	"shot_9_boss_stages.png", "shot_10_pause.png",
+	"shot_9_boss_stages.png", "shot_10_pause.png", "shot_11_throw.png",
 ]
 
 ## 区域都按新的空间预算取：HUD 0.03~0.10 / 老板 0.18~0.46 / 操作区 0.51~0.92 / 底部 0.93~0.99
@@ -109,12 +109,22 @@ func _test_text_and_colors() -> void:
 
 func _test_boss_visible() -> void:
 	var playing := _load("shot_3_mid.png")
-	_check("老板区域有肤色像素（Q 版老板真的画出来了）",
-		_skin_ratio(playing, REGION_BOSS) > 0.01,
-		"%.4f" % _skin_ratio(playing, REGION_BOSS))
-	_check("老板穿着深蓝西装（不是一片色块）",
-		_suit_ratio(playing, REGION_BOSS) > 0.02,
-		"%.4f" % _suit_ratio(playing, REGION_BOSS))
+	if _boss_art_present():
+		# 已经有真正的 Boss 美术素材：按「Q 版老板」的像素特征严格检查
+		_check("老板区域有肤色像素（Q 版老板素材真的画出来了）",
+			_skin_ratio(playing, REGION_BOSS) > 0.01,
+			"%.4f" % _skin_ratio(playing, REGION_BOSS))
+		_check("老板穿着深蓝西装（不是一片色块）",
+			_suit_ratio(playing, REGION_BOSS) > 0.02,
+			"%.4f" % _suit_ratio(playing, REGION_BOSS))
+	else:
+		# 还没放素材：画面上必须是「素材缺失占位提示」，而不是程序画的几何 Boss
+		var panel := _panel_ratio(playing, REGION_BOSS)
+		var gold := _gold_ratio(playing, REGION_BOSS)
+		_check("Boss 素材缺失时，画面上是明确的「素材缺失」占位提示（不是程序绘制的假 Boss）",
+			panel > 0.30 and gold > 0.005, "面板 %.3f / 金色标题 %.4f" % [panel, gold])
+		_check("占位提示出现在 Boss 应该在的位置（贴图已就位、位置/大小正确）",
+			panel > 0.30, "%.3f" % panel)
 
 
 func _test_pots_visible() -> void:
@@ -154,6 +164,20 @@ func _test_boss_stages_differ() -> void:
 		var rect := Rect2(0.16 + 0.24 * float(column) - 0.07, 0.16 + 0.30 * float(row) - 0.055,
 			0.14, 0.11)
 		signatures.append(_signature(image, rect))
+	if not _boss_art_present():
+		# 七张表情素材还没放进来：这里只守住「七张阶段图里 Boss 都按素材管线画出来了」，
+		# 并把「七种表情像素不同」放回素材就位后（下面的严格检查）执行。
+		var all_drawn := true
+		var detail: Array = []
+		for i in 7:
+			var rect := Rect2(0.16 + 0.24 * float(i % 4) - 0.07, 0.16 + 0.30 * float(i / 4) - 0.055,
+				0.14, 0.11)
+			var drawn := _panel_ratio(image, rect) > 0.30 and _gold_ratio(image, rect) > 0.005
+			all_drawn = all_drawn and drawn
+			detail.append("%d:%s" % [i + 1, "有" if drawn else "无"])
+		_check("七个阶段的截图里都渲染出了 Boss（素材管线 + 占位提示）",
+			all_drawn, "、".join(detail))
+		return
 	var distinct := 0
 	for i in 7:
 		for j in range(i + 1, 7):
@@ -207,6 +231,11 @@ func _test_panels() -> void:
 
 func _load(name: String) -> Image:
 	return Image.load_from_file("%s/%s" % [SHOT_DIR, name])
+
+
+## 项目里有没有真正的 Boss 美术素材（没有就是占位图 + 缺件提示）
+func _boss_art_present() -> bool:
+	return FileAccess.file_exists("res://assets/characters/boss/boss_stage_1.png")
 
 
 func _redness(image: Image, region: Rect2) -> float:

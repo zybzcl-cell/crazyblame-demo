@@ -12,6 +12,7 @@ extends BlameTestBase
 
 func run_tests() -> void:
 	suite_name = "老板甩锅 / 菜单层级 / 受击表现"
+	_test_boss_sprite_architecture()
 	_test_throw_directions()
 	_test_throw_action()
 	_test_throw_is_always_playable()
@@ -22,6 +23,89 @@ func run_tests() -> void:
 	_test_hit_effects_by_pot()
 	_test_hit_effects_accumulate()
 	_test_boss_voice()
+	free_game()
+
+
+# ---------------------------------------------------------------- 零、Boss 必须是「素材驱动」
+
+func _test_boss_sprite_architecture() -> void:
+	var game := make_game()
+	var boss := game.boss()
+	var sprite := boss.sprite_node()
+	_check("Boss 本体由一个 AnimatedSprite2D 负责显示（不再是 _draw 画角色）",
+		sprite != null and sprite is AnimatedSprite2D, str(sprite))
+	_check("AnimatedSprite2D 挂着 SpriteFrames（素材 → 动画帧）",
+		sprite != null and sprite.sprite_frames != null, str(sprite.sprite_frames))
+	var frames := sprite.sprite_frames
+	var expected: Array = ["idle_stage_1", "idle_stage_2", "idle_stage_3", "idle_stage_4",
+		"idle_stage_5", "idle_stage_6", "idle_stage_7", "ko", "throw_notice", "throw_windup",
+		"throw_release", "throw_recover"]
+	var missing_anims: Array = []
+	for name in expected:
+		if not frames.has_animation(str(name)):
+			missing_anims.append(name)
+		elif frames.get_frame_count(str(name)) <= 0:
+			missing_anims.append("%s(空)" % name)
+	_check("七阶段 + 甩锅四段 + 崩溃都有对应动画（素材可逐张替换）", missing_anims.is_empty(),
+		str(missing_anims))
+	_check("Boss 节点自己不再画角色（正常运行 0 个程序图元）",
+		boss.procedural_draw_primitives() == 0, str(boss.procedural_draw_primitives()))
+	_check("受击特效在独立的 FX 子节点上（Boss 本体 = 贴图，FX = 独立层）",
+		boss.get_node_or_null("BossFx") != null and boss.get_node_or_null("BossDesk") != null)
+
+	# 七阶段 → 动画切换
+	var mapping: Array = []
+	var stage_ok := true
+	for i in 7:
+		boss.set_stage_silent(i)
+		var want := "ko" if i == 6 else "idle_stage_%d" % (i + 1)
+		mapping.append("%d→%s" % [i + 1, boss.current_animation()])
+		if boss.current_animation() != want:
+			stage_ok = false
+	_check("七个阶段各自切到对应的表情动画（同一个老板的不同表情）", stage_ok,
+		"、".join(mapping))
+	_check("崩溃用独立的 ko 动画", boss.current_animation() == "ko")
+	boss.reset()
+
+	# 甩锅动作 → 动画切换（与时间轴对齐）
+	skip_countdown(game)
+	boss.begin_throw("right_mid", Vector2(0.6, 0.8), 0.0)
+	_check("甩锅第 1 段（注意 / 伸手）切到 throw_notice",
+		boss.visual_state_name() == "throw_notice"
+		and boss.current_animation() == "throw_notice",
+		"%s / %s" % [boss.visual_state_name(), boss.current_animation()])
+	boss.tick(BlameBoss.THROW_NOTICE + 0.02)
+	_check("甩锅第 2 段（蓄力）切到 throw_windup",
+		boss.visual_state_name() == "throw_windup"
+		and boss.current_animation() == "throw_windup",
+		"%s / %s" % [boss.visual_state_name(), boss.current_animation()])
+	boss.tick(BlameBoss.THROW_WINDUP - BlameBoss.THROW_NOTICE)
+	_check("脱手那一帧切到 throw_release",
+		boss.visual_state_name() == "throw_release"
+		and boss.current_animation() == "throw_release",
+		"%s / %s" % [boss.visual_state_name(), boss.current_animation()])
+	boss.tick(0.20)
+	_check("收势阶段切到 throw_recover",
+		boss.visual_state_name() == "throw_recover"
+		and boss.current_animation() == "throw_recover",
+		"%s / %s" % [boss.visual_state_name(), boss.current_animation()])
+	boss.tick(BlameBoss.THROW_TOTAL)
+	_check("动作结束后回到当前阶段的表情动画",
+		boss.visual_state_name() == "idle" and boss.current_animation() == "idle_stage_1",
+		"%s / %s" % [boss.visual_state_name(), boss.current_animation()])
+
+	# 素材缺失时：明确走「占位图 + 缺件清单」，绝不偷偷退回程序绘制的 Boss
+	if not boss.has_boss_art():
+		var texture := BossArt.new().placeholder_texture()
+		_check("素材缺失时用的是「素材缺失占位图」，而不是程序画的 Boss",
+			texture != null and texture.resource_path.contains("placeholder"), str(texture))
+		var status := boss.art_status_text()
+		_check("素材缺失会给出明确的缺件提示（缺哪些文件）",
+			status.contains("素材缺失") and status.contains("boss_stage_1"),
+			status)
+	else:
+		_check("已加载真正的 Boss 美术素材（assets/characters/boss/）",
+			boss.has_boss_art(), boss.art_status_text())
 	free_game()
 
 

@@ -78,6 +78,30 @@ func _capture_round() -> void:
 	await _settle(4)
 	_check("游戏中期画面（老板 + 锅 + 连击 + 精神状态条 + 底部统计）能真实渲染",
 		await _shot("shot_3_mid.png"))
+	# 2.5 老板甩锅：锅里还在他手上（抬手蓄力），验证「素材化之后甩锅动作仍然正常」
+	var throw_pot := game.force_spawn("iron")
+	advance(game, 0.24, 0.02)
+	await _settle(3)
+	_check("老板甩锅动作（锅被攥在手里蓄力）能真实渲染", await _shot("shot_11_throw.png"))
+	var sprite := game.boss().sprite_node()
+	var view_size: Vector2 = get_viewport().get_visible_rect().size
+	var frame_texture: Texture2D = sprite.sprite_frames.get_frame_texture(sprite.animation, sprite.frame)
+	var drawn: Vector2 = frame_texture.get_size() * sprite.scale
+	var layout := game.layout_data()
+	var boss_bar: Rect2 = layout["boss_bar"]
+	var sprite_top: float = game.boss().global_position.y + sprite.position.y - drawn.y * 0.5
+	_check("Boss 本体由贴图渲染（AnimatedSprite2D + 纹理）且尺寸合理",
+		sprite != null and sprite.sprite_frames != null
+		and drawn.y > view_size.y * 0.05 and drawn.y < view_size.y * 0.6,
+		"贴图 %.0f×%.0f" % [drawn.x, drawn.y])
+	_check("Boss 贴图不遮挡顶部 HUD（头顶在老板状态条下方）",
+		sprite_top > boss_bar.end.y, "贴图顶部 %.0f / 状态条下沿 %.0f" % [sprite_top, boss_bar.end.y])
+	_check("Boss 节点本身不再画角色（程序图元 = 0）",
+		game.boss().procedural_draw_primitives() == 0,
+		str(game.boss().procedural_draw_primitives()))
+	_check("锅确实先在老板手里（蓄力阶段）", throw_pot != null and throw_pot.is_winding_up(),
+		str(throw_pot.state if throw_pot != null else -1))
+	advance(game, 0.6, 0.02)
 	# 3. 老板受到多次攻击：打到 3~4 阶段，桌上东西歪掉、白板曲线下滑
 	var guard := 0
 	while game.boss().hp_ratio() > 0.42 and guard < 30 and not game.is_finished():
@@ -203,7 +227,8 @@ func _shot(file_name: String) -> bool:
 func _all_shots_have_content() -> bool:
 	var names := ["shot_0_glyphs.png", "shot_1_menu.png", "shot_2_start.png", "shot_3_mid.png",
 		"shot_4_hurt.png", "shot_5_frenzy.png", "shot_6_result.png", "shot_7_codex.png",
-		"shot_8_settings.png", "shot_9_boss_stages.png", "shot_10_pause.png"]
+		"shot_8_settings.png", "shot_9_boss_stages.png", "shot_10_pause.png",
+		"shot_11_throw.png"]
 	var ok := true
 	for name in names:
 		var path := "%s/%s" % [OUT_DIR, name]

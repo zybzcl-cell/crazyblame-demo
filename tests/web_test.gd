@@ -90,6 +90,9 @@ func _test_build_output() -> void:
 	_check("中文子集字体真的打进了资源包（Web 端不会缺字）",
 		_pck_contains("index.pck", "assets/fonts/NotoSansSC-Regular.otf"))
 	_check("主菜单场景也在资源包里", _pck_contains("index.pck", "scenes/main_menu.tscn"))
+	_check("Boss 素材目录（贴图 + manifest.json）也打进了资源包",
+		_pck_contains("index.pck", "assets/characters/boss/_placeholder_missing_art.png")
+		and _pck_contains("index.pck", "assets/characters/boss/manifest.json"))
 
 
 # ---------------------------------------------------------------- 工具
